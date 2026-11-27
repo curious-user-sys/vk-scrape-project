@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   CommunitySearchItem,
@@ -44,10 +44,11 @@ export default function App() {
   const [sort, setSort] = useState<"desc" | "asc">("desc");
   const [page, setPage] = useState(1);
 
-  // Global çeviri aç/kapa ve önbellek
+  // Global çeviri aç/kapa, iptal kontrolü ve önbellek
   const [translateEnabled, setTranslateEnabled] = useState(false);
   const [translations, setTranslations] = useState<Record<number, string>>({});
   const [isTranslating, setIsTranslating] = useState(false);
+  const cancelTranslationRef = useRef(false);
 
   const [banner, setBanner] = useState<string | null>(null);
 
@@ -131,24 +132,26 @@ export default function App() {
     };
   }, [newRef, activeTab]);
 
-  // Çeviri açıksa mevcut sayfadaki gönderileri tek tek çevirip anında ekrana yansıt
+  // Çeviri açıksa yalnızca mevcut sayfadaki (posts.items) henüz çevrilmemiş gönderileri çevir
   useEffect(() => {
     if (!translateEnabled || !posts?.items.length) return;
 
-    const missing = posts.items.filter(
+    const currentPageItems = posts.items;
+    const missing = currentPageItems.filter(
       (p) => p.text_preview && translations[p.id] === undefined
     );
     if (missing.length === 0) return;
 
-    let cancelled = false;
+    let effectCancelled = false;
+    cancelTranslationRef.current = false;
     setIsTranslating(true);
 
     (async () => {
       for (const p of missing) {
-        if (cancelled) break;
+        if (effectCancelled || cancelTranslationRef.current) break;
         try {
           const res = await api.translatePost(p.id);
-          if (!cancelled) {
+          if (!effectCancelled && !cancelTranslationRef.current) {
             setTranslations((prev) => ({ ...prev, [p.id]: res.translated_text }));
           }
           await new Promise((r) => setTimeout(r, 200));
@@ -156,16 +159,33 @@ export default function App() {
           // Tek bir gönderi hata verirse diğerlerine devam et
         }
       }
-      if (!cancelled) setIsTranslating(false);
+      if (!effectCancelled) setIsTranslating(false);
     })();
 
     return () => {
-      cancelled = true;
+      effectCancelled = true;
     };
-  }, [translateEnabled, posts]);
+  }, [translateEnabled, posts, page]);
+
+  const handleToggleTranslateSwitch = () => {
+    if (isTranslating) {
+      cancelTranslationRef.current = true;
+      setIsTranslating(false);
+      setTranslateEnabled(false);
+      return;
+    }
+    setTranslateEnabled((v) => !v);
+  };
+
+  const handleCancelTranslation = () => {
+    cancelTranslationRef.current = true;
+    setIsTranslating(false);
+  };
 
   const handleSwitchTab = (tab: SourceType) => {
     if (tab === activeTab) return;
+    cancelTranslationRef.current = true;
+    setIsTranslating(false);
     setActiveTab(tab);
     setSourceId("");
     setPage(1);
@@ -260,7 +280,7 @@ export default function App() {
         <div className="source-actions">
           <button
             className={translateEnabled ? "btn-primary" : ""}
-            onClick={() => setTranslateEnabled((v) => !v)}
+            onClick={handleToggleTranslateSwitch}
           >
             {isTranslating
               ? "Çevriliyor..."
@@ -268,6 +288,11 @@ export default function App() {
               ? "TR Çeviri: Açık"
               : "TR Çeviri: Kapalı"}
           </button>
+          {isTranslating && (
+            <button className="btn-danger" onClick={handleCancelTranslation}>
+              Çeviriyi İptal Et
+            </button>
+          )}
           <button
             className="btn-primary"
             onClick={handleTriggerScrape}
@@ -371,7 +396,6 @@ export default function App() {
             </button>
           </form>
 
-          {/* Canlı Topluluk Öneri Listesi */}
           {activeTab === "community" && (searchingVk || suggestions.length > 0) && (
             <div className="autocomplete-list">
               {searchingVk && <div className="autocomplete-empty">VK'da aranıyor...</div>}
@@ -688,7 +712,6 @@ export default function App() {
                   <div><strong>Web Sitesi:</strong> {selectedUser.profile_data.site}</div>
                 )}
 
-                {/* Ek Veriler */}
                 {selectedUser.profile_data.extras && (
                   <div style={{ marginTop: "0.75rem", borderTop: "1px solid #e5e7eb", paddingTop: "0.75rem" }}>
                     <strong>Ek Veri Erişimi (Son Tarama):</strong>
@@ -756,6 +779,43 @@ export default function App() {
                           </ul>
                         </div>
                       )}
+
+                    {selectedUser.profile_data.extras.subscriptions && (
+                      <div style={{ marginTop: "0.5rem" }}>
+                        <div>
+                          Abonelikler:{" "}
+                          {selectedUser.profile_data.extras.subscriptions.accessible
+                            ? `${selectedUser.profile_data.extras.subscriptions.groups_total ?? 0} topluluk · ${selectedUser.profile_data.extras.subscriptions.users_total ?? 0} kişi`
+                            : "Erişime kapalı"}
+                        </div>
+                        {selectedUser.profile_data.extras.subscriptions.groups_sample.length > 0 && (
+                          <div style={{ marginTop: "0.25rem" }}>
+                            <strong>Takip Edilen Topluluklar:</strong>{" "}
+                            {selectedUser.profile_data.extras.subscriptions.groups_sample.map((g, i) => (
+                              <span key={g.id}>
+                                {i > 0 ? ", " : ""}
+                                <a href={g.url} target="_blank" rel="noopener noreferrer">
+                                  {g.name}
+                                </a>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {selectedUser.profile_data.extras.subscriptions.users_sample.length > 0 && (
+                          <div style={{ marginTop: "0.25rem" }}>
+                            <strong>Takip Edilen Kişiler:</strong>{" "}
+                            {selectedUser.profile_data.extras.subscriptions.users_sample.map((su, i) => (
+                              <span key={su.id}>
+                                {i > 0 ? ", " : ""}
+                                <a href={su.url} target="_blank" rel="noopener noreferrer">
+                                  {su.name}
+                                </a>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

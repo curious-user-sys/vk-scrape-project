@@ -27,6 +27,13 @@ export interface UserExtras {
     total: number | null;
     sample: { id: number; title: string; views?: number | null; link: string }[];
   };
+  subscriptions?: {
+    accessible: boolean;
+    groups_total: number | null;
+    users_total: number | null;
+    groups_sample: { id: number; name: string; members_count?: number | null; url: string }[];
+    users_sample: { id: number; name: string; url: string }[];
+  };
 }
 
 export interface ProfileData {
