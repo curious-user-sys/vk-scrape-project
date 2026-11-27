@@ -11,36 +11,82 @@ export interface CommunitySearchItem {
   is_verified: boolean;
 }
 
+export interface UserExtraList<T> {
+  accessible?: boolean;
+  error?: string | null;
+  total?: number | null;
+  count?: number | null;
+  items?: T[];
+  sample?: T[];
+}
+
+export interface FollowerEntry {
+  id: number;
+  name?: string;
+  first_name?: string;
+  last_name?: string;
+  screen_name?: string | null;
+  photo?: string | null;
+  url: string;
+}
+
+export interface PhotoEntry {
+  id: number;
+  owner_id?: number;
+  url: string;
+  link: string;
+  text?: string | null;
+  date?: number | string | null;
+}
+
+export interface VideoEntry {
+  id: number;
+  owner_id?: number;
+  title: string;
+  views?: number | null;
+  duration?: number | null;
+  link: string;
+}
+
+export interface SubscriptionGroupEntry {
+  id: number;
+  name: string;
+  screen_name?: string | null;
+  members_count?: number | null;
+  url: string;
+}
+
+export interface SubscriptionUserEntry {
+  id: number;
+  name: string;
+  screen_name?: string | null;
+  url: string;
+}
+
+export interface SubscriptionsExtra {
+  accessible?: boolean;
+  error?: string | null;
+  groups_total?: number | null;
+  users_total?: number | null;
+  groups_items?: SubscriptionGroupEntry[];
+  groups_sample?: SubscriptionGroupEntry[];
+  users_items?: SubscriptionUserEntry[];
+  users_sample?: SubscriptionUserEntry[];
+}
+
 export interface UserExtras {
-  followers?: {
-    accessible: boolean;
-    total: number | null;
-    sample: { id: number; name: string; url: string }[];
-  };
-  photos?: {
-    accessible: boolean;
-    total: number | null;
-    sample: { id: number; url: string; link: string }[];
-  };
-  videos?: {
-    accessible: boolean;
-    total: number | null;
-    sample: { id: number; title: string; views?: number | null; link: string }[];
-  };
-  subscriptions?: {
-    accessible: boolean;
-    groups_total: number | null;
-    users_total: number | null;
-    groups_sample: { id: number; name: string; members_count?: number | null; url: string }[];
-    users_sample: { id: number; name: string; url: string }[];
-  };
+  followers?: UserExtraList<FollowerEntry>;
+  photos?: UserExtraList<PhotoEntry>;
+  videos?: UserExtraList<VideoEntry>;
+  subscriptions?: SubscriptionsExtra;
+  friends?: UserExtraList<FollowerEntry>;
 }
 
 export interface ProfileData {
   first_name?: string | null;
   last_name?: string | null;
   photo?: string | null;
-  sex?: string | null;
+  sex?: string | number | null;
   status?: string | null;
   about?: string | null;
   bdate?: string | null;
@@ -48,15 +94,17 @@ export interface ProfileData {
   country?: string | null;
   home_town?: string | null;
   followers_count?: number | null;
+  posts_count?: number | null;
   site?: string | null;
   occupation?: string | null;
-  universities?: string[];
+  career?: string | string[] | null;
+  universities?: string[] | null;
   is_verified?: boolean;
   is_online?: boolean;
-  last_seen?: string | null;
+  last_seen?: string | number | null;
   can_access_closed?: boolean;
-  accessible_fields?: string[];
-  extras?: UserExtras;
+  accessible_fields?: string[] | null;
+  extras?: UserExtras | null;
 }
 
 export interface Source {
@@ -69,6 +117,7 @@ export interface Source {
   url: string;
   is_active: boolean;
   is_closed: boolean;
+  posts_count?: number | null;
   profile_data?: ProfileData | null;
   created_at: string;
   updated_at: string;
@@ -117,6 +166,7 @@ export interface PostDetail {
   source_id: number;
   source_title: string;
   source_url: string;
+  vk_owner_id?: number;
   vk_post_id: number;
   url: string;
   text: string | null;
@@ -136,4 +186,33 @@ export interface PaginatedPosts {
   page_size: number;
   total_pages: number;
   items: PostListItem[];
+}
+
+export interface PostLiker {
+  id: number;
+  name: string;
+  url: string;
+  photo?: string | null;
+  reaction_type?: string | null;
+}
+
+export interface PostCommentItem {
+  id: number;
+  from_id?: number | null;
+  author_name: string;
+  author_url?: string | null;
+  text: string;
+  date?: number | string | null;
+  likes_count?: number | null;
+}
+
+export interface PostEngagementData {
+  likes_accessible: boolean;
+  likes_error?: string | null;
+  likes_total: number | null;
+  likers: PostLiker[];
+  comments_accessible: boolean;
+  comments_error?: string | null;
+  comments_total: number | null;
+  comments: PostCommentItem[];
 }

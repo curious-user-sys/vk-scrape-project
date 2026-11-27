@@ -62,7 +62,7 @@ VK (`vk.com` / `vk.ru`) üzerindeki herkese açık topluluklardan ve kişi profi
 
 ---
 
-## Kurulum ve Çalıştırma (Linux / Ubuntu)
+## Kurulum ve Çalıştırma (Linux)
 # VK Veri Toplama ve Görüntüleme Paneli (`vk-scrape`)
 
 VK (`vk.com` / `vk.ru`) üzerindeki topluluklardan ve kişi profillerinden (açık/kapalı) veri toplayan, PostgreSQL veritabanında saklayan ve Türkçe web arayüzünde sunan ygulama.
@@ -77,7 +77,7 @@ VK (`vk.com` / `vk.ru`) üzerindeki topluluklardan ve kişi profillerinden (aç�
 
 ---
 
-## Hızlı Kurulum ve Çalıştırma (Linux / Ubuntu)
+## Hızlı Kurulum ve Çalıştırma (Linux)
 
 ### 1. Repoyu İndir
 ```bash

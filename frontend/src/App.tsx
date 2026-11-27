@@ -2,11 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type {
   CommunitySearchItem,
+  FollowerEntry,
   Overview,
   PaginatedPosts,
+  PhotoEntry,
   PostDetail,
+  PostEngagementData,
   Source,
   SourceType,
+  SubscriptionGroupEntry,
+  SubscriptionUserEntry,
+  VideoEntry,
 } from "./types";
 import "./App.css";
 
@@ -16,15 +22,35 @@ const getInitialTheme = (): ThemeMode => {
   try {
     const saved = localStorage.getItem("vk_theme");
     if (saved === "dark" || saved === "light") return saved;
-    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
   } catch {
-    // depolama erişimi yoksa varsayılan tema kullanılır
+    // depolama erişimi yoksa varsayılan koyu tema kullanılır
   }
-  return "light";
+  return "dark";
 };
 
-const fmtDate = (iso?: string | null) =>
-  iso ? new Date(iso).toLocaleString("tr-TR") : "—";
+const fmtDate = (iso?: string | number | null) => {
+  if (iso === null || iso === undefined || iso === "") return "Erişilemez / Veri yok";
+  const d =
+    typeof iso === "number"
+      ? new Date(iso > 1e12 ? iso : iso * 1000)
+      : new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return d.toLocaleString("tr-TR");
+};
+
+const fmtNumber = (val?: number | null, fallback = "Erişilemez / Veri yok") => {
+  if (val === null || val === undefined || Number.isNaN(Number(val))) return fallback;
+  return Number(val).toLocaleString("tr-TR");
+};
+
+const fmtFieldText = (val?: string | number | string[] | null, fallback = "Erişilemez / Veri yok") => {
+  if (val === null || val === undefined) return fallback;
+  if (Array.isArray(val)) {
+    return val.length > 0 ? val.join(" | ") : "Veri yok";
+  }
+  const str = String(val).trim();
+  return str.length > 0 ? str : fallback;
+};
 
 const STATUS_LABELS: Record<string, string> = {
   running: "Çalışıyor",
@@ -41,6 +67,8 @@ export default function App() {
   const [sources, setSources] = useState<Source[]>([]);
   const [posts, setPosts] = useState<PaginatedPosts | null>(null);
   const [selectedPost, setSelectedPost] = useState<PostDetail | null>(null);
+  const [engagement, setEngagement] = useState<PostEngagementData | null>(null);
+  const [loadingEngagement, setLoadingEngagement] = useState(false);
   const [selectedUser, setSelectedUser] = useState<Source | null>(null);
 
   // Kaynak ekleme ve canlı topluluk araması
@@ -268,15 +296,49 @@ export default function App() {
   };
 
   const openDetail = async (id: number) => {
-    const detail = await api.getPostDetail(id);
-    setSelectedPost(detail);
-    if (translateEnabled && detail.text && translations[detail.id] === undefined) {
-      api
-        .translatePost(detail.id)
-        .then((res) =>
-          setTranslations((prev) => ({ ...prev, [detail.id]: res.translated_text }))
-        )
-        .catch(() => {});
+    setEngagement(null);
+    setLoadingEngagement(true);
+    try {
+      const detail = await api.getPostDetail(id);
+      setSelectedPost(detail);
+
+      if (translateEnabled && detail.text && translations[detail.id] === undefined) {
+        api
+          .translatePost(detail.id)
+          .then((res) =>
+            setTranslations((prev) => ({ ...prev, [detail.id]: res.translated_text }))
+          )
+          .catch(() => {});
+      }
+
+      const src = sources.find((s) => s.id === detail.source_id);
+      const ownerId =
+        detail.vk_owner_id ??
+        (src
+          ? src.source_type === "user"
+            ? Math.abs(src.vk_owner_id)
+            : -Math.abs(src.vk_owner_id)
+          : null);
+
+      if (ownerId !== null) {
+        const eng = await api.getPostEngagement(ownerId, detail.vk_post_id);
+        setEngagement(eng);
+      } else {
+        setEngagement({
+          likes_accessible: false,
+          likes_error: "Kaynak owner_id bulunamadı",
+          likes_total: detail.likes_count,
+          likers: [],
+          comments_accessible: false,
+          comments_error: "Kaynak owner_id bulunamadı",
+          comments_total: detail.comments_count,
+          comments: [],
+        });
+      }
+    } catch (err) {
+      setBanner(err instanceof Error ? err.message : "Gönderi detayı yüklenemedi.");
+    } finally {
+      setLoadingEngagement(false);
     }
   };
 
@@ -292,6 +354,46 @@ export default function App() {
     if (tr === undefined) return original;
     return tr.length > 220 ? tr.slice(0, 220) + "…" : tr;
   };
+
+  const getSourcePostCount = (s: Source) => {
+    if (typeof s.posts_count === "number") return s.posts_count;
+    if (typeof s.profile_data?.posts_count === "number") return s.profile_data.posts_count;
+    if (posts && Number(sourceId) === s.id) return posts.total;
+    return null;
+  };
+
+  const getListEntries = <T,>(
+    block?: { items?: T[]; sample?: T[] } | null
+  ): T[] => {
+    if (!block) return [];
+    if (Array.isArray(block.items) && block.items.length > 0) return block.items;
+    if (Array.isArray(block.sample) && block.sample.length > 0) return block.sample;
+    return [];
+  };
+
+  const renderExtraStatus = (
+    block?: { accessible?: boolean; error?: string | null; total?: number | null; count?: number | null } | null
+  ) => {
+    if (!block) return "Erişilemez / Veri yok";
+    if (block.error) return `Hata: ${block.error}`;
+    if (block.accessible === false) return "Erişime kapalı";
+    const num = block.total ?? block.count ?? null;
+    return `Erişilebilir (${fmtNumber(num, "0")})`;
+  };
+
+  const userProfile = selectedUser?.profile_data ?? null;
+  const userExtras = userProfile?.extras ?? null;
+  const followerEntries: FollowerEntry[] = getListEntries(userExtras?.followers);
+  const photoEntries: PhotoEntry[] = getListEntries(userExtras?.photos);
+  const videoEntries: VideoEntry[] = getListEntries(userExtras?.videos);
+  const subGroupEntries: SubscriptionGroupEntry[] =
+    userExtras?.subscriptions?.groups_items?.length
+      ? userExtras.subscriptions.groups_items
+      : userExtras?.subscriptions?.groups_sample || [];
+  const subUserEntries: SubscriptionUserEntry[] =
+    userExtras?.subscriptions?.users_items?.length
+      ? userExtras.subscriptions.users_items
+      : userExtras?.subscriptions?.users_sample || [];
 
   return (
     <div className="container">
@@ -468,49 +570,55 @@ export default function App() {
         {sourceErr && <p className="error-text">{sourceErr}</p>}
 
         <div className="source-list">
-          {visibleSources.map((s) => (
-            <div key={s.id} className="source-item">
-              <div className="source-info">
-                {activeTab === "user" && s.profile_data?.photo && (
-                  <img src={s.profile_data.photo} alt={s.title} className="avatar" />
-                )}
-                <div>
-                  <strong>
-                    {s.title} {s.profile_data?.is_verified ? "✓" : ""}
-                  </strong>{" "}
-                  <a href={s.url} target="_blank" rel="noopener noreferrer">
-                    ({s.screen_name || (activeTab === "user" ? `id${s.vk_owner_id}` : s.vk_owner_id)})
-                  </a>
-                  {activeTab === "user" && (
-                    <span className="muted">
-                      {" "}
-                      ·{" "}
-                      <span className={s.profile_data?.is_online ? "badge-online" : "badge-offline"}>
-                        {s.profile_data?.is_online ? "Çevrimiçi" : "Çevrimdışı"}
-                      </span>{" "}
-                      · {s.is_closed ? "Kapalı Profil" : "Açık Profil"}
-                      {s.profile_data?.sex ? ` · ${s.profile_data.sex}` : ""}
-                      {s.profile_data?.city ? ` · ${s.profile_data.city}` : ""}
-                      {s.profile_data?.followers_count != null
-                        ? ` · ${s.profile_data.followers_count.toLocaleString("tr-TR")} takipçi`
-                        : ""}
-                    </span>
+          {visibleSources.map((s) => {
+            const srcPostCount = getSourcePostCount(s);
+            return (
+              <div key={s.id} className="source-item">
+                <div className="source-info">
+                  {activeTab === "user" && s.profile_data?.photo && (
+                    <img src={s.profile_data.photo} alt={s.title} className="avatar" />
                   )}
+                  <div>
+                    <strong>
+                      {s.title} {s.profile_data?.is_verified ? "✓" : ""}
+                    </strong>{" "}
+                    <a href={s.url} target="_blank" rel="noopener noreferrer">
+                      ({s.screen_name || (activeTab === "user" ? `id${s.vk_owner_id}` : s.vk_owner_id)})
+                    </a>
+                    {srcPostCount !== null && (
+                      <span className="muted"> · {srcPostCount} gönderi</span>
+                    )}
+                    {activeTab === "user" && (
+                      <span className="muted">
+                        {" "}
+                        ·{" "}
+                        <span className={s.profile_data?.is_online ? "badge-online" : "badge-offline"}>
+                          {s.profile_data?.is_online ? "Çevrimiçi" : "Çevrimdışı"}
+                        </span>{" "}
+                        · {s.is_closed ? "Kapalı Profil" : "Açık Profil"}
+                        {s.profile_data?.sex ? ` · ${s.profile_data.sex}` : ""}
+                        {s.profile_data?.city ? ` · ${s.profile_data.city}` : ""}
+                        {s.profile_data?.followers_count != null
+                          ? ` · ${s.profile_data.followers_count.toLocaleString("tr-TR")} takipçi`
+                          : ""}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="source-actions">
+                  {activeTab === "user" && (
+                    <button onClick={() => setSelectedUser(s)}>Profil & Ek Veriler</button>
+                  )}
+                  <button onClick={() => handleToggleSource(s)}>
+                    {s.is_active ? "Aktif" : "Pasif"}
+                  </button>
+                  <button className="btn-danger" onClick={() => handleDeleteSource(s.id)}>
+                    Sil
+                  </button>
                 </div>
               </div>
-              <div className="source-actions">
-                {activeTab === "user" && (
-                  <button onClick={() => setSelectedUser(s)}>Profil & Ek Veriler</button>
-                )}
-                <button onClick={() => handleToggleSource(s)}>
-                  {s.is_active ? "Aktif" : "Pasif"}
-                </button>
-                <button className="btn-danger" onClick={() => handleDeleteSource(s.id)}>
-                  Sil
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {visibleSources.length === 0 && (
             <p className="muted">
               {activeTab === "community"
@@ -637,6 +745,7 @@ export default function App() {
                 ? ` · Görüntülenme: ${selectedPost.views_count}`
                 : ""}
             </p>
+
             {selectedPost.attachments && selectedPost.attachments.length > 0 && (
               <div className="attachments">
                 <strong>Ekler:</strong>
@@ -657,9 +766,136 @@ export default function App() {
                 ))}
               </div>
             )}
-            <a href={selectedPost.url} target="_blank" rel="noopener noreferrer">
-              Orijinal VK Gönderisini Aç ↗
-            </a>
+
+            {/* Etkileşim Detayları: Kim Beğendi & Yorumlar */}
+            <div
+              style={{
+                marginTop: "1rem",
+                borderTop: "1px solid var(--border)",
+                paddingTop: "0.9rem",
+                display: "grid",
+                gap: "0.9rem",
+              }}
+            >
+              {loadingEngagement ? (
+                <div className="muted">Beğenenler ve yorumlar VK'dan çekiliyor...</div>
+              ) : engagement ? (
+                <>
+                  <div>
+                    <strong>
+                      Beğenenler (
+                      {engagement.likes_accessible
+                        ? fmtNumber(engagement.likes_total ?? engagement.likers.length, "0")
+                        : engagement.likes_error
+                        ? `Hata: ${engagement.likes_error}`
+                        : "Erişilemez"}
+                      ):
+                    </strong>
+                    {engagement.likers.length > 0 ? (
+                      <div style={{ marginTop: "0.4rem", display: "flex", flexWrap: "wrap", gap: "0.45rem" }}>
+                        {engagement.likers.map((lk) => (
+                          <a
+                            key={lk.id}
+                            href={lk.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "0.35rem",
+                              padding: "0.25rem 0.5rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "6px",
+                              fontSize: "0.85rem",
+                            }}
+                          >
+                            {lk.photo && (
+                              <img
+                                src={lk.photo}
+                                alt={lk.name}
+                                style={{ width: 20, height: 20, borderRadius: "50%", objectFit: "cover" }}
+                              />
+                            )}
+                            <span>{lk.name}</span>
+                            {lk.reaction_type && (
+                              <span className="muted">({lk.reaction_type})</span>
+                            )}
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="muted">
+                        {engagement.likes_error
+                          ? `Hata: ${engagement.likes_error}`
+                          : engagement.likes_accessible
+                          ? "Beğeni listesi boş veya anonim erişimde gizli"
+                          : "Erişilemez"}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <strong>
+                      Yorumlar (
+                      {engagement.comments_accessible
+                        ? fmtNumber(engagement.comments_total ?? engagement.comments.length, "0")
+                        : engagement.comments_error
+                        ? `Hata: ${engagement.comments_error}`
+                        : "Erişilemez"}
+                      ):
+                    </strong>
+                    {engagement.comments.length > 0 ? (
+                      <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.5rem" }}>
+                        {engagement.comments.map((cm) => (
+                          <div
+                            key={cm.id}
+                            style={{
+                              padding: "0.55rem 0.7rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "6px",
+                              fontSize: "0.88rem",
+                            }}
+                          >
+                            <div style={{ display: "flex", justifyContent: "space-between", gap: "0.5rem" }}>
+                              {cm.author_url ? (
+                                <a href={cm.author_url} target="_blank" rel="noopener noreferrer">
+                                  <strong>{cm.author_name}</strong>
+                                </a>
+                              ) : (
+                                <strong>{cm.author_name}</strong>
+                              )}
+                              <span className="muted">{fmtDate(cm.date)}</span>
+                            </div>
+                            <div style={{ marginTop: "0.25rem", whiteSpace: "pre-wrap" }}>
+                              {cm.text}
+                            </div>
+                            {cm.likes_count !== null && cm.likes_count !== undefined && (
+                              <div className="muted" style={{ fontSize: "0.8rem" }}>
+                                Beğeni: {cm.likes_count}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="muted">
+                        {engagement.comments_error
+                          ? `Hata: ${engagement.comments_error}`
+                          : engagement.comments_accessible
+                          ? "Yorum yok veya erişime kapalı"
+                          : "Erişilemez"}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <div style={{ marginTop: "0.9rem" }}>
+              <a href={selectedPost.url} target="_blank" rel="noopener noreferrer">
+                Orijinal VK Gönderisini Aç ↗
+              </a>
+            </div>
           </div>
         </div>
       )}
@@ -670,195 +906,314 @@ export default function App() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <div className="source-info">
-                {selectedUser.profile_data?.photo && (
+                {userProfile?.photo && (
                   <img
-                    src={selectedUser.profile_data.photo}
+                    src={userProfile.photo}
                     alt={selectedUser.title}
                     className="avatar-lg"
                   />
                 )}
                 <div>
                   <h3 style={{ margin: 0 }}>
-                    {selectedUser.title} {selectedUser.profile_data?.is_verified ? "✓" : ""}
+                    {selectedUser.title} {userProfile?.is_verified ? "✓" : ""}
                   </h3>
                   <span
                     className={
-                      selectedUser.profile_data?.is_online ? "badge-online" : "badge-offline"
+                      userProfile?.is_online ? "badge-online" : "badge-offline"
                     }
                   >
-                    {selectedUser.profile_data?.is_online ? "Şu an çevrimiçi" : "Çevrimdışı"}
+                    {userProfile?.is_online === true
+                      ? "Şu an çevrimiçi"
+                      : userProfile?.is_online === false
+                      ? "Çevrimdışı"
+                      : "Çevrimiçi durumu: Erişilemez"}
                   </span>
                 </div>
               </div>
               <button onClick={() => setSelectedUser(null)}>Kapat</button>
             </div>
+
             <p className="muted">
               Profil Erişimi:{" "}
               {selectedUser.is_closed
                 ? "Kapalı Profil (yalnızca açık meta veriler erişilebilir)"
                 : "Açık Profil"}
             </p>
-            {selectedUser.profile_data && (
-              <div className="profile-grid">
-                {selectedUser.profile_data.sex && (
-                  <div><strong>Cinsiyet:</strong> {selectedUser.profile_data.sex}</div>
-                )}
-                {selectedUser.profile_data.status && (
-                  <div><strong>Durum:</strong> {selectedUser.profile_data.status}</div>
-                )}
-                {selectedUser.profile_data.about && (
-                  <div><strong>Hakkında:</strong> {selectedUser.profile_data.about}</div>
-                )}
-                {selectedUser.profile_data.city && (
-                  <div><strong>Şehir:</strong> {selectedUser.profile_data.city}</div>
-                )}
-                {selectedUser.profile_data.country && (
-                  <div><strong>Ülke:</strong> {selectedUser.profile_data.country}</div>
-                )}
-                {selectedUser.profile_data.bdate && (
-                  <div><strong>Doğum Tarihi:</strong> {selectedUser.profile_data.bdate}</div>
-                )}
-                {selectedUser.profile_data.occupation && (
-                  <div><strong>İş / Eğitim:</strong> {selectedUser.profile_data.occupation}</div>
-                )}
-                {selectedUser.profile_data.universities &&
-                  selectedUser.profile_data.universities.length > 0 && (
-                    <div>
-                      <strong>Üniversiteler:</strong>{" "}
-                      {selectedUser.profile_data.universities.join(" | ")}
-                    </div>
-                  )}
-                {selectedUser.profile_data.followers_count != null && (
-                  <div>
-                    <strong>Takipçi:</strong>{" "}
-                    {selectedUser.profile_data.followers_count.toLocaleString("tr-TR")}
+
+            <div className="profile-grid">
+              <div>
+                <strong>Kaydedilen Gönderi Sayısı:</strong>{" "}
+                {fmtNumber(getSourcePostCount(selectedUser), "0")}
+              </div>
+              <div>
+                <strong>Cinsiyet:</strong> {fmtFieldText(userProfile?.sex, "Cinsiyet: Erişilemez")}
+              </div>
+              <div>
+                <strong>Durum:</strong> {fmtFieldText(userProfile?.status, "Durum: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Hakkında:</strong> {fmtFieldText(userProfile?.about, "Hakkında: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Şehir:</strong> {fmtFieldText(userProfile?.city, "Şehir: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Ülke:</strong> {fmtFieldText(userProfile?.country, "Ülke: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Memleket:</strong> {fmtFieldText(userProfile?.home_town, "Memleket: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Doğum Tarihi:</strong> {fmtFieldText(userProfile?.bdate, "Doğum tarihi: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>İş / Eğitim:</strong> {fmtFieldText(userProfile?.occupation, "İş / Eğitim: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Kariyer:</strong> {fmtFieldText(userProfile?.career, "Kariyer: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Üniversiteler:</strong>{" "}
+                {fmtFieldText(userProfile?.universities, "Üniversiteler: Erişilemez / Yok")}
+              </div>
+              <div>
+                <strong>Takipçi Sayısı:</strong>{" "}
+                {fmtNumber(userProfile?.followers_count, "Takipçi sayısı: Erişilemez")}
+              </div>
+              <div>
+                <strong>Son Görülme:</strong>{" "}
+                {userProfile?.last_seen !== undefined && userProfile?.last_seen !== null
+                  ? fmtDate(userProfile.last_seen)
+                  : "Son görülme: Erişilemez"}
+              </div>
+              <div>
+                <strong>Web Sitesi:</strong>{" "}
+                {fmtFieldText(userProfile?.site, "Web sitesi: Erişilemez / Yok")}
+              </div>
+
+              {/* Ek Veriler */}
+              <div
+                style={{
+                  marginTop: "0.75rem",
+                  borderTop: "1px solid var(--border)",
+                  paddingTop: "0.75rem",
+                }}
+              >
+                <strong>Ek Veri Erişimi (Son Tarama):</strong>
+
+                {!userExtras ? (
+                  <div className="muted">
+                    Ek veriler henüz çekilmemiş veya erişilemez (Önce "Aktif Kişileri Topla" ile tarayın).
                   </div>
-                )}
-                {selectedUser.profile_data.last_seen && (
-                  <div><strong>Son Görülme:</strong> {fmtDate(selectedUser.profile_data.last_seen)}</div>
-                )}
-                {selectedUser.profile_data.site && (
-                  <div><strong>Web Sitesi:</strong> {selectedUser.profile_data.site}</div>
-                )}
-
-                {selectedUser.profile_data.extras && (
-                  <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
-                    <strong>Ek Veri Erişimi (Son Tarama):</strong>
+                ) : (
+                  <>
                     <div>
-                      Takipçiler:{" "}
-                      {selectedUser.profile_data.extras.followers?.accessible
-                        ? `Erişilebilir (${selectedUser.profile_data.extras.followers.total?.toLocaleString("tr-TR") ?? 0})`
-                        : "Erişime kapalı"}
+                      <strong>Takipçiler:</strong> {renderExtraStatus(userExtras.followers)}
                     </div>
                     <div>
-                      Fotoğraflar:{" "}
-                      {selectedUser.profile_data.extras.photos?.accessible
-                        ? `Erişilebilir (${selectedUser.profile_data.extras.photos.total ?? 0})`
-                        : "Erişime kapalı"}
+                      <strong>Fotoğraflar:</strong> {renderExtraStatus(userExtras.photos)}
                     </div>
                     <div>
-                      Videolar:{" "}
-                      {selectedUser.profile_data.extras.videos?.accessible
-                        ? `Erişilebilir (${selectedUser.profile_data.extras.videos.total ?? 0})`
-                        : "Erişime kapalı"}
+                      <strong>Videolar:</strong> {renderExtraStatus(userExtras.videos)}
+                    </div>
+                    <div>
+                      <strong>Abonelikler:</strong>{" "}
+                      {!userExtras.subscriptions
+                        ? "Erişilemez / Veri yok"
+                        : userExtras.subscriptions.error
+                        ? `Hata: ${userExtras.subscriptions.error}`
+                        : userExtras.subscriptions.accessible === false
+                        ? "Erişime kapalı"
+                        : `Erişilebilir (${fmtNumber(userExtras.subscriptions.groups_total, "0")} topluluk · ${fmtNumber(userExtras.subscriptions.users_total, "0")} kişi)`}
                     </div>
 
-                    {selectedUser.profile_data.extras.followers?.sample &&
-                      selectedUser.profile_data.extras.followers.sample.length > 0 && (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <strong>Örnek Takipçiler:</strong>{" "}
-                          {selectedUser.profile_data.extras.followers.sample.map((f, i) => (
-                            <span key={f.id}>
-                              {i > 0 ? ", " : ""}
-                              <a href={f.url} target="_blank" rel="noopener noreferrer">
-                                {f.name}
+                    {/* Tüm Takipçiler Listesi */}
+                    <div style={{ marginTop: "0.6rem" }}>
+                      <strong>Takipçiler Listesi ({followerEntries.length} kayıt gösteriliyor):</strong>
+                      {followerEntries.length > 0 ? (
+                        <div
+                          style={{
+                            marginTop: "0.35rem",
+                            maxHeight: 160,
+                            overflowY: "auto",
+                            display: "flex",
+                            flexWrap: "wrap",
+                            gap: "0.4rem",
+                            padding: "0.4rem",
+                            border: "1px solid var(--border)",
+                            borderRadius: "6px",
+                          }}
+                        >
+                          {followerEntries.map((f, idx) => {
+                            const fName =
+                              f.name ||
+                              `${f.first_name || ""} ${f.last_name || ""}`.trim() ||
+                              `id${f.id}`;
+                            return (
+                              <a
+                                key={`${f.id}-${idx}`}
+                                href={f.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: "0.3rem",
+                                  padding: "0.2rem 0.45rem",
+                                  border: "1px solid var(--border)",
+                                  borderRadius: "5px",
+                                  fontSize: "0.82rem",
+                                }}
+                              >
+                                {f.photo && (
+                                  <img
+                                    src={f.photo}
+                                    alt={fName}
+                                    style={{ width: 18, height: 18, borderRadius: "50%", objectFit: "cover" }}
+                                  />
+                                )}
+                                <span>{fName}</span>
                               </a>
-                            </span>
-                          ))}
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="muted">
+                          {userExtras.followers?.error
+                            ? `Hata: ${userExtras.followers.error}`
+                            : "Takipçi listesi boş veya erişilemez"}
                         </div>
                       )}
+                    </div>
 
-                    {selectedUser.profile_data.extras.photos?.sample &&
-                      selectedUser.profile_data.extras.photos.sample.length > 0 && (
-                        <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
-                          {selectedUser.profile_data.extras.photos.sample.slice(0, 6).map((ph) => (
-                            <a key={ph.id} href={ph.link} target="_blank" rel="noopener noreferrer">
+                    {/* Fotoğraflar */}
+                    <div style={{ marginTop: "0.6rem" }}>
+                      <strong>Fotoğraflar ({photoEntries.length} kayıt gösteriliyor):</strong>
+                      {photoEntries.length > 0 ? (
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "0.5rem",
+                            flexWrap: "wrap",
+                            marginTop: "0.35rem",
+                          }}
+                        >
+                          {photoEntries.map((ph, idx) => (
+                            <a
+                              key={`${ph.id}-${idx}`}
+                              href={ph.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={ph.text || ph.link}
+                            >
                               <img
                                 src={ph.url}
-                                alt="Profil fotoğrafı"
-                                style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 6 }}
+                                alt={ph.text || "Profil fotoğrafı"}
+                                style={{
+                                  width: 72,
+                                  height: 72,
+                                  objectFit: "cover",
+                                  borderRadius: 6,
+                                  border: "1px solid var(--border)",
+                                }}
                               />
                             </a>
                           ))}
                         </div>
-                      )}
-
-                    {selectedUser.profile_data.extras.videos?.sample &&
-                      selectedUser.profile_data.extras.videos.sample.length > 0 && (
-                        <div style={{ marginTop: "0.5rem" }}>
-                          <strong>Son Videolar:</strong>
-                          <ul style={{ margin: "0.25rem 0", paddingLeft: "1.2rem" }}>
-                            {selectedUser.profile_data.extras.videos.sample.slice(0, 5).map((v) => (
-                              <li key={v.id}>
-                                <a href={v.link} target="_blank" rel="noopener noreferrer">
-                                  {v.title}
-                                </a>
-                              </li>
-                            ))}
-                          </ul>
+                      ) : (
+                        <div className="muted">
+                          {userExtras.photos?.error
+                            ? `Hata: ${userExtras.photos.error}`
+                            : "Fotoğraf bulunamadı veya erişilemez"}
                         </div>
                       )}
+                    </div>
 
-                    {selectedUser.profile_data.extras.subscriptions && (
-                      <div style={{ marginTop: "0.5rem" }}>
-                        <div>
-                          Abonelikler:{" "}
-                          {selectedUser.profile_data.extras.subscriptions.accessible
-                            ? `${selectedUser.profile_data.extras.subscriptions.groups_total ?? 0} topluluk · ${selectedUser.profile_data.extras.subscriptions.users_total ?? 0} kişi`
-                            : "Erişime kapalı"}
+                    {/* Videolar */}
+                    <div style={{ marginTop: "0.6rem" }}>
+                      <strong>Videolar ({videoEntries.length} kayıt gösteriliyor):</strong>
+                      {videoEntries.length > 0 ? (
+                        <ul style={{ margin: "0.25rem 0", paddingLeft: "1.2rem" }}>
+                          {videoEntries.map((v, idx) => (
+                            <li key={`${v.id}-${idx}`}>
+                              <a href={v.link} target="_blank" rel="noopener noreferrer">
+                                {v.title}
+                              </a>
+                              {v.views !== undefined && v.views !== null && (
+                                <span className="muted">
+                                  {" "}
+                                  ({fmtNumber(v.views, "0")} görüntülenme)
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="muted">
+                          {userExtras.videos?.error
+                            ? `Hata: ${userExtras.videos.error}`
+                            : "Video bulunamadı veya erişilemez"}
                         </div>
-                        {selectedUser.profile_data.extras.subscriptions.groups_sample.length > 0 && (
-                          <div style={{ marginTop: "0.25rem" }}>
-                            <strong>Takip Edilen Topluluklar:</strong>{" "}
-                            {selectedUser.profile_data.extras.subscriptions.groups_sample.map((g, i) => (
-                              <span key={g.id}>
-                                {i > 0 ? ", " : ""}
-                                <a href={g.url} target="_blank" rel="noopener noreferrer">
-                                  {g.name}
-                                </a>
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        {selectedUser.profile_data.extras.subscriptions.users_sample.length > 0 && (
-                          <div style={{ marginTop: "0.25rem" }}>
-                            <strong>Takip Edilen Kişiler:</strong>{" "}
-                            {selectedUser.profile_data.extras.subscriptions.users_sample.map((su, i) => (
-                              <span key={su.id}>
-                                {i > 0 ? ", " : ""}
-                                <a href={su.url} target="_blank" rel="noopener noreferrer">
-                                  {su.name}
-                                </a>
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+                      )}
+                    </div>
 
-                {selectedUser.profile_data.accessible_fields && (
-                  <div className="muted" style={{ marginTop: "0.5rem" }}>
-                    <strong>Erişilebilen Profil Alanları:</strong>{" "}
-                    {selectedUser.profile_data.accessible_fields.join(", ")}
-                  </div>
+                    {/* Takip Edilen Topluluklar ve Kişiler */}
+                    <div style={{ marginTop: "0.6rem" }}>
+                      <strong>Takip Edilen Topluluklar ({subGroupEntries.length}):</strong>
+                      {subGroupEntries.length > 0 ? (
+                        <div style={{ marginTop: "0.25rem" }}>
+                          {subGroupEntries.map((g, i) => (
+                            <span key={`${g.id}-${i}`}>
+                              {i > 0 ? ", " : ""}
+                              <a href={g.url} target="_blank" rel="noopener noreferrer">
+                                {g.name}
+                              </a>
+                              {g.members_count != null && (
+                                <span className="muted"> ({fmtNumber(g.members_count)})</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="muted">Takip edilen topluluk yok veya erişilemez</div>
+                      )}
+                    </div>
+
+                    <div style={{ marginTop: "0.5rem" }}>
+                      <strong>Takip Edilen Kişiler ({subUserEntries.length}):</strong>
+                      {subUserEntries.length > 0 ? (
+                        <div style={{ marginTop: "0.25rem" }}>
+                          {subUserEntries.map((su, i) => (
+                            <span key={`${su.id}-${i}`}>
+                              {i > 0 ? ", " : ""}
+                              <a href={su.url} target="_blank" rel="noopener noreferrer">
+                                {su.name}
+                              </a>
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="muted">Takip edilen kişi yok veya erişilemez</div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
-            )}
-            <a href={selectedUser.url} target="_blank" rel="noopener noreferrer">
-              VK Profilini Aç ↗
-            </a>
+
+              <div className="muted" style={{ marginTop: "0.5rem" }}>
+                <strong>Erişilebilen Profil Alanları:</strong>{" "}
+                {fmtFieldText(
+                  userProfile?.accessible_fields,
+                  "Erişilebilen alan listesi mevcut değil"
+                )}
+              </div>
+            </div>
+
+            <div style={{ marginTop: "0.75rem" }}>
+              <a href={selectedUser.url} target="_blank" rel="noopener noreferrer">
+                VK Profilini Aç ↗
+              </a>
+            </div>
           </div>
         </div>
       )}
