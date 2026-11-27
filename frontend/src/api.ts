@@ -1,5 +1,6 @@
 import type {
   CommunitySearchItem,
+  FollowerEntry,
   Overview,
   PaginatedPosts,
   PostCommentItem,
@@ -287,5 +288,22 @@ export const api = {
       comments_total: commentsTotal,
       comments,
     };
+  },
+getSourceFollowers: (
+    sourceId: number,
+    params: { q?: string; only_unfollowed?: boolean; page?: number; page_size?: number }
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.q?.trim()) qs.set("q", params.q.trim());
+    if (params.only_unfollowed) qs.set("only_unfollowed", "true");
+    qs.set("page", String(params.page ?? 1));
+    qs.set("page_size", String(params.page_size ?? 25));
+    return request<{
+      total: number;
+      page: number;
+      page_size: number;
+      total_pages: number;
+      items: FollowerEntry[];
+    }>(`/api/sources/${sourceId}/followers?${qs.toString()}`);
   },
 };

@@ -27,6 +27,8 @@ from pydantic import BaseModel
 import json
 from pathlib import Path
 from urllib.parse import quote
+from app.models.vk import Post, ScrapeRun, Source, UserFollower
+
 
 router = APIRouter(prefix="/api", tags=["vk-scrape"])
 
@@ -351,3 +353,51 @@ def translate_post(post_id: int, target: str = Query(default="tr"), db: Session 
         return {"post_id": post.id, "translated_text": translated}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Çeviri başarısız: {exc}") from exc
+
+@router.get("/sources/{source_id}/followers")
+def list_source_followers(
+    source_id: int,
+    q: str | None = Query(default=None),
+    only_unfollowed: bool = Query(default=False),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    query = db.query(UserFollower).filter(UserFollower.source_id == source_id)
+    if only_unfollowed:
+        query = query.filter(UserFollower.is_following.is_(False))
+    if q and q.strip():
+        term = f"%{q.strip()}%"
+        query = query.filter(
+            (UserFollower.full_name.ilike(term))
+            | (UserFollower.screen_name.ilike(term))
+            | (UserFollower.profile_url.ilike(term))
+        )
+
+    total = query.count()
+    items = (
+        query.order_by(UserFollower.is_following.desc(), UserFollower.last_seen_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, (total + page_size - 1) // page_size),
+        "items": [
+            {
+                "id": r.vk_user_id,
+                "name": r.full_name,
+                "screen_name": r.screen_name,
+                "photo": r.photo_url,
+                "url": r.profile_url,
+                "is_following": r.is_following,
+                "first_seen_at": r.first_seen_at.isoformat() if r.first_seen_at else None,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+                "unfollowed_at": r.unfollowed_at.isoformat() if r.unfollowed_at else None,
+            }
+            for r in items
+        ],
+    }

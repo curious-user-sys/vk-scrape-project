@@ -27,7 +27,10 @@ export interface FollowerEntry {
   last_name?: string;
   screen_name?: string | null;
   photo?: string | null;
+  photo_url?: string | null;
   url: string;
+  is_following?: boolean;
+  unfollowed_at?: string | null;
 }
 
 export interface PhotoEntry {

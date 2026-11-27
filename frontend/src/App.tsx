@@ -71,6 +71,11 @@ export default function App() {
   const [loadingEngagement, setLoadingEngagement] = useState(false);
   const [selectedUser, setSelectedUser] = useState<Source | null>(null);
 
+  useEffect(() => {
+    setFollowerSearch("");
+    setFollowerPage(1);
+  }, [selectedUser?.id]);
+
   // Kaynak ekleme ve canlı topluluk araması
   const [newRef, setNewRef] = useState("");
   const [sourceErr, setSourceErr] = useState<string | null>(null);
@@ -295,6 +300,53 @@ export default function App() {
     }
   };
 
+  const [followerSearch, setFollowerSearch] = useState("");
+  const [onlyUnfollowed, setOnlyUnfollowed] = useState(false);
+  const [followerPage, setFollowerPage] = useState(1);
+  const [dbFollowers, setDbFollowers] = useState<FollowerEntry[]>([]);
+  const [dbFollowersTotal, setDbFollowersTotal] = useState(0);
+  const [dbFollowersTotalPages, setDbFollowersTotalPages] = useState(1);
+
+  useEffect(() => {
+    setFollowerSearch("");
+    setOnlyUnfollowed(false);
+    setFollowerPage(1);
+  }, [selectedUser?.id]);
+
+  useEffect(() => {
+    if (!selectedUser) {
+      setDbFollowers([]);
+      setDbFollowersTotal(0);
+      setDbFollowersTotalPages(1);
+      return;
+    }
+
+    let cancelled = false;
+    api
+      .getSourceFollowers(selectedUser.id, {
+        q: followerSearch,
+        only_unfollowed: onlyUnfollowed,
+        page: followerPage,
+        page_size: 25,
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setDbFollowers(res.items ?? []);
+        setDbFollowersTotal(res.total ?? 0);
+        setDbFollowersTotalPages(res.total_pages ?? 1);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDbFollowers([]);
+        setDbFollowersTotal(0);
+        setDbFollowersTotalPages(1);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUser, followerSearch, onlyUnfollowed, followerPage]);
+
   const openDetail = async (id: number) => {
     setEngagement(null);
     setLoadingEngagement(true);
@@ -383,7 +435,6 @@ export default function App() {
 
   const userProfile = selectedUser?.profile_data ?? null;
   const userExtras = userProfile?.extras ?? null;
-  const followerEntries: FollowerEntry[] = getListEntries(userExtras?.followers);
   const photoEntries: PhotoEntry[] = getListEntries(userExtras?.photos);
   const videoEntries: VideoEntry[] = getListEntries(userExtras?.videos);
   const subGroupEntries: SubscriptionGroupEntry[] =
@@ -394,7 +445,7 @@ export default function App() {
     userExtras?.subscriptions?.users_items?.length
       ? userExtras.subscriptions.users_items
       : userExtras?.subscriptions?.users_sample || [];
-
+  
   return (
     <div className="container">
       <header className="header">
@@ -1027,62 +1078,130 @@ export default function App() {
                         : `Erişilebilir (${fmtNumber(userExtras.subscriptions.groups_total, "0")} topluluk · ${fmtNumber(userExtras.subscriptions.users_total, "0")} kişi)`}
                     </div>
 
-                    {/* Tüm Takipçiler Listesi */}
+                    {/* Aranabilir ve Sayfalı Takipçiler Listesi */}
                     <div style={{ marginTop: "0.6rem" }}>
-                      <strong>Takipçiler Listesi ({followerEntries.length} kayıt gösteriliyor):</strong>
-                      {followerEntries.length > 0 ? (
-                        <div
-                          style={{
-                            marginTop: "0.35rem",
-                            maxHeight: 160,
-                            overflowY: "auto",
-                            display: "flex",
-                            flexWrap: "wrap",
-                            gap: "0.4rem",
-                            padding: "0.4rem",
-                            border: "1px solid var(--border)",
-                            borderRadius: "6px",
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                        <strong>Takipçiler Listesi ({dbFollowersTotal} kayıt):</strong>
+                        <label style={{ fontSize: "0.82rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                          <input
+                            type="checkbox"
+                            checked={onlyUnfollowed}
+                            onChange={(e) => {
+                              setOnlyUnfollowed(e.target.checked);
+                              setFollowerPage(1);
+                            }}
+                          />
+                          Sadece takibi bırakanlar
+                        </label>
+                      </div>
+
+                      <div style={{ marginTop: "0.35rem", marginBottom: "0.4rem" }}>
+                        <input
+                          type="search"
+                          placeholder="Veritabanındaki takipçilerde isim veya link ara..."
+                          value={followerSearch}
+                          onChange={(e) => {
+                            setFollowerSearch(e.target.value);
+                            setFollowerPage(1);
                           }}
-                        >
-                          {followerEntries.map((f, idx) => {
-                            const fName =
-                              f.name ||
-                              `${f.first_name || ""} ${f.last_name || ""}`.trim() ||
-                              `id${f.id}`;
-                            return (
-                              <a
-                                key={`${f.id}-${idx}`}
-                                href={f.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: "0.3rem",
-                                  padding: "0.2rem 0.45rem",
-                                  border: "1px solid var(--border)",
-                                  borderRadius: "5px",
-                                  fontSize: "0.82rem",
-                                }}
+                          style={{
+                            width: "100%",
+                            padding: "0.4rem 0.6rem",
+                            border: "1px solid var(--border-input)",
+                            borderRadius: "6px",
+                            background: "var(--surface)",
+                            color: "var(--text)",
+                            fontSize: "0.85rem",
+                          }}
+                        />
+                      </div>
+
+                      {dbFollowers.length > 0 ? (
+                        <>
+                          <div
+                            style={{
+                              maxHeight: 200,
+                              overflowY: "auto",
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: "0.4rem",
+                              padding: "0.4rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "6px",
+                            }}
+                          >
+                            {dbFollowers.map((f) => {
+                              const fName = f.name || `id${f.id}`;
+                              const avatar = f.photo || f.photo_url;
+                              const isUnfollowed = f.is_following === false;
+                              return (
+                                <div
+                                  key={f.id}
+                                  style={{
+                                    display: "inline-flex",
+                                    alignItems: "center",
+                                    gap: "0.35rem",
+                                    padding: "0.25rem 0.5rem",
+                                    border: "1px solid var(--border)",
+                                    borderRadius: "5px",
+                                    fontSize: "0.82rem",
+                                    opacity: isUnfollowed ? 0.75 : 1,
+                                  }}
+                                >
+                                  {avatar && (
+                                    <img
+                                      src={avatar}
+                                      alt={fName}
+                                      style={{ width: 18, height: 18, borderRadius: "50%", objectFit: "cover" }}
+                                    />
+                                  )}
+                                  <a href={f.url} target="_blank" rel="noopener noreferrer">
+                                    {fName}
+                                  </a>
+                                  {isUnfollowed && (
+                                    <span className="muted">
+                                      (Takibi bıraktı: {fmtDate(f.unfollowed_at)})
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {dbFollowersTotalPages > 1 && (
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                marginTop: "0.4rem",
+                                fontSize: "0.82rem",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                disabled={followerPage <= 1}
+                                onClick={() => setFollowerPage((p) => Math.max(1, p - 1))}
                               >
-                                {f.photo && (
-                                  <img
-                                    src={f.photo}
-                                    alt={fName}
-                                    style={{ width: 18, height: 18, borderRadius: "50%", objectFit: "cover" }}
-                                  />
-                                )}
-                                <span>{fName}</span>
-                              </a>
-                            );
-                          })}
-                        </div>
+                                Önceki
+                              </button>
+                              <span className="muted">
+                                Sayfa {followerPage} / {dbFollowersTotalPages}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={followerPage >= dbFollowersTotalPages}
+                                onClick={() =>
+                                  setFollowerPage((p) => Math.min(dbFollowersTotalPages, p + 1))
+                                }
+                              >
+                                Sonraki
+                              </button>
+                            </div>
+                          )}
+                        </>
                       ) : (
-                        <div className="muted">
-                          {userExtras.followers?.error
-                            ? `Hata: ${userExtras.followers.error}`
-                            : "Takipçi listesi boş veya erişilemez"}
-                        </div>
+                        <div className="muted">Kayıtlı takipçi bulunamadı.</div>
                       )}
                     </div>
 

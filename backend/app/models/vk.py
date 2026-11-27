@@ -14,7 +14,28 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
 
+class UserFollower(Base):
+    __tablename__ = "user_followers"
+    __table_args__ = (
+        UniqueConstraint("source_id", "vk_user_id", name="uq_user_followers_source_vk_user"),
+        Index("ix_user_followers_source_active", "source_id", "is_following"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_id = Column(Integer, ForeignKey("sources.id", ondelete="CASCADE"), nullable=False, index=True)
+    vk_user_id = Column(BigInteger, nullable=False, index=True)
+    full_name = Column(String(255), nullable=False)
+    screen_name = Column(String(255), nullable=True)
+    photo_url = Column(Text, nullable=True)
+    profile_url = Column(Text, nullable=False)
+    is_following = Column(Boolean, nullable=False, default=True)
+    first_seen_at = Column(DateTime(timezone=True), nullable=False)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False)
+    unfollowed_at = Column(DateTime(timezone=True), nullable=True)
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)

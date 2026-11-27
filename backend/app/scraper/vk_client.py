@@ -340,26 +340,96 @@ class VkClient:
         """Açık/kapalı profil için takipçi, fotoğraf ve video erişimini test edip özet veriyi çeker."""
         extras: dict = {}
 
-        # 1. Takipçiler
+        # # 1. Takipçiler
+        # try:
+        #     f_resp = self._call(
+        #         "users.getFollowers",
+        #         {"user_id": user_id, "offset": 0, "count": 10, "fields": "photo_50,screen_name"},
+        #     )
+        #     extras["followers"] = {
+        #         "accessible": True,
+        #         "total": f_resp.get("count", 0),
+        #         "sample": [
+        #             {
+        #                 "id": item.get("id"),
+        #                 "name": f"{item.get('first_name', '')} {item.get('last_name', '')}".strip(),
+        #                 "url": f"{VK_SITE}/{item.get('screen_name') or 'id' + str(item.get('id'))}",
+        #             }
+        #             for item in (f_resp.get("items") or [])
+        #         ],
+        #     }
+        # except VkScraperError as exc:
+        #     extras["followers"] = {"accessible": False, "total": None, "sample": [], "reason": str(exc)}
+        
+
+        # 1. Takipçiler (sayfalı çekim, varsayılan en fazla 500 kayıt)
         try:
-            f_resp = self._call(
-                "users.getFollowers",
-                {"user_id": user_id, "offset": 0, "count": 10, "fields": "photo_50,screen_name"},
-            )
+            follower_items: list[dict] = []
+            followers_total: int | None = None
+            batch_size = 200
+            max_followers = 500
+            offset = 0
+
+            while offset < max_followers:
+                take = min(batch_size, max_followers - offset)
+                f_resp = self._call(
+                    "users.getFollowers",
+                    {
+                        "user_id": user_id,
+                        "offset": offset,
+                        "count": take,
+                        "fields": "photo_50,screen_name",
+                    },
+                )
+                if followers_total is None and isinstance(f_resp, dict):
+                    followers_total = f_resp.get("count")
+
+                batch = (f_resp.get("items") or []) if isinstance(f_resp, dict) else []
+                if not batch:
+                    break
+
+                for item in batch:
+                    if isinstance(item, dict):
+                        uid = item.get("id")
+                        full_name = f"{item.get('first_name', '')} {item.get('last_name', '')}".strip()
+                        follower_items.append(
+                            {
+                                "id": uid,
+                                "name": full_name or f"id{uid}",
+                                "photo": item.get("photo_50"),
+                                "url": f"{VK_SITE}/{item.get('screen_name') or 'id' + str(uid)}",
+                            }
+                        )
+                    else:
+                        follower_items.append(
+                            {
+                                "id": item,
+                                "name": f"id{item}",
+                                "photo": None,
+                                "url": f"{VK_SITE}/id{item}",
+                            }
+                        )
+
+                if len(batch) < take:
+                    break
+                offset += len(batch)
+
             extras["followers"] = {
                 "accessible": True,
-                "total": f_resp.get("count", 0),
-                "sample": [
-                    {
-                        "id": item.get("id"),
-                        "name": f"{item.get('first_name', '')} {item.get('last_name', '')}".strip(),
-                        "url": f"{VK_SITE}/{item.get('screen_name') or 'id' + str(item.get('id'))}",
-                    }
-                    for item in (f_resp.get("items") or [])
-                ],
+                "total": followers_total if followers_total is not None else len(follower_items),
+                "fetched": len(follower_items),
+                "items": follower_items,
+                "sample": follower_items[:10],
             }
         except VkScraperError as exc:
-            extras["followers"] = {"accessible": False, "total": None, "sample": [], "reason": str(exc)}
+            extras["followers"] = {
+                "accessible": False,
+                "total": None,
+                "fetched": 0,
+                "items": [],
+                "sample": [],
+                "error": str(exc),
+            }
 
         # 2. Fotoğraflar
         try:
@@ -492,3 +562,51 @@ class VkClient:
                 }
             )
         return results
+
+    def fetch_all_followers_page(
+        self, user_id: int, offset: int = 0, count: int = 200
+    ) -> tuple[int | None, list[dict]]:
+        """users.getFollowers çağrısını verilen offset ve count ile yapar."""
+        resp = self._call(
+            "users.getFollowers",
+            {
+                "user_id": user_id,
+                "offset": offset,
+                "count": count,
+                "fields": "photo_50,screen_name",
+            },
+        )
+        total = resp.get("count") if isinstance(resp, dict) else None
+        raw_items = (resp.get("items") or []) if isinstance(resp, dict) else []
+        parsed: list[dict] = []
+
+        for item in raw_items:
+            if isinstance(item, dict):
+                uid = item.get("id")
+                if uid is None:
+                    continue
+                uid_int = int(uid)
+                screen = item.get("screen_name")
+                full_name = f"{item.get('first_name', '')} {item.get('last_name', '')}".strip()
+                parsed.append(
+                    {
+                        "vk_user_id": uid_int,
+                        "full_name": full_name or f"id{uid_int}",
+                        "screen_name": screen,
+                        "photo_url": item.get("photo_50"),
+                        "profile_url": f"{VK_SITE}/{screen or f'id{uid_int}'}",
+                    }
+                )
+            elif isinstance(item, (int, str)) and str(item).isdigit():
+                uid_int = int(item)
+                parsed.append(
+                    {
+                        "vk_user_id": uid_int,
+                        "full_name": f"id{uid_int}",
+                        "screen_name": None,
+                        "photo_url": None,
+                        "profile_url": f"{VK_SITE}/id{uid_int}",
+                    }
+                )
+
+        return total, parsed
