@@ -10,6 +10,19 @@ import type {
 } from "./types";
 import "./App.css";
 
+type ThemeMode = "light" | "dark";
+
+const getInitialTheme = (): ThemeMode => {
+  try {
+    const saved = localStorage.getItem("vk_theme");
+    if (saved === "dark" || saved === "light") return saved;
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
+  } catch {
+    // depolama erişimi yoksa varsayılan tema kullanılır
+  }
+  return "light";
+};
+
 const fmtDate = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString("tr-TR") : "—";
 
@@ -21,6 +34,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 export default function App() {
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [activeTab, setActiveTab] = useState<SourceType>("community");
 
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -51,6 +65,15 @@ export default function App() {
   const cancelTranslationRef = useRef(false);
 
   const [banner, setBanner] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      localStorage.setItem("vk_theme", theme);
+    } catch {
+      // yoksay
+    }
+  }, [theme]);
 
   const communities = sources.filter((s) => s.source_type !== "user");
   const users = sources.filter((s) => s.source_type === "user");
@@ -278,6 +301,12 @@ export default function App() {
           <p className="muted">VK toplulukları ve kişi profillerini toplama ve inceleme</p>
         </div>
         <div className="source-actions">
+          <button
+            type="button"
+            onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
+          >
+            {theme === "dark" ? "Açık Tema" : "Koyu Tema"}
+          </button>
           <button
             className={translateEnabled ? "btn-primary" : ""}
             onClick={handleToggleTranslateSwitch}
@@ -713,7 +742,7 @@ export default function App() {
                 )}
 
                 {selectedUser.profile_data.extras && (
-                  <div style={{ marginTop: "0.75rem", borderTop: "1px solid #e5e7eb", paddingTop: "0.75rem" }}>
+                  <div style={{ marginTop: "0.75rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
                     <strong>Ek Veri Erişimi (Son Tarama):</strong>
                     <div>
                       Takipçiler:{" "}
