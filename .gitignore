@@ -1,0 +1,43 @@
+
+.venv/
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+backend/.env
+frontend/.env
+backend/translation_cache.json
+frontend/node_modules/
+frontend/dist/
+.vscode/
+.idea/
+.DS_Store
+# Python virtual environments
+.venv/
+**/.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# Node
+node_modules/
+
+# Build files
+dist/
+build/
